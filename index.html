@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Templi di Tarxien</title>
+
+  <!--
+    CORREZIONE AR PER ANDROID (ottobre 2026). Deve restare PRIMA dello script di Model Viewer.
+    Chrome per Android recente espone l'API "WebXR Layers": Three.js (dentro Model Viewer) la usa
+    e il modello, pur collocato, non viene mostrato sopra la fotocamera. Nascondendo
+    createProjectionLayer si torna al percorso classico XRWebGLLayer. Solo telefoni Android.
+    Indirizzo + ?layers=1  -> correzione disattivata (controprova)
+    Indirizzo + ?diagnostica=1 -> mostra il riquadro diagnostico
+  -->
+  <script>
+    (function () {
+      var ua = navigator.userAgent;
+      var params = new URLSearchParams(location.search);
+      var isAndroidPhone = /Android/i.test(ua) && !/OculusBrowser|Quest|Pico/i.test(ua);
+      var forceLayers = params.get('layers') === '1';
+      window.__arPatch = 'non necessaria su questo dispositivo';
+      window.__xrLayer = 'nessuna sessione';
+      if (isAndroidPhone && !forceLayers && typeof XRWebGLBinding !== 'undefined'
+          && 'createProjectionLayer' in XRWebGLBinding.prototype) {
+        try {
+          delete XRWebGLBinding.prototype.createProjectionLayer;
+          window.__arPatch = ('createProjectionLayer' in XRWebGLBinding.prototype) ? 'NON riuscita' : 'attiva';
+        } catch (e) { window.__arPatch = 'errore: ' + e.message; }
+      } else if (forceLayers) {
+        window.__arPatch = 'disattivata di proposito (?layers=1)';
+      }
+      if (typeof XRSession !== 'undefined' && XRSession.prototype.updateRenderState) {
+        var originale = XRSession.prototype.updateRenderState;
+        XRSession.prototype.updateRenderState = function (state) {
+          if (state && state.baseLayer) window.__xrLayer = 'XRWebGLLayer (classico)';
+          else if (state && state.layers) window.__xrLayer = 'XRProjectionLayer (layers)';
+          window.dispatchEvent(new Event('xr-layer-info'));
+          return originale.apply(this, arguments);
+        };
+      }
+    })();
+  </script>
+
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.4.0/model-viewer.min.js"></script>
+  <style>
+    body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; background-color: #ffffff; }
+    model-viewer { width: 100%; height: 100%; }
+    #diagnostica { display: none; position: absolute; bottom: 16px; left: 12px; right: 12px; z-index: 10; padding: 10px 12px; background: rgba(5, 22, 35, .85); color: white; border-radius: 8px; font-family: Arial, sans-serif; font-size: 13px; line-height: 1.5; pointer-events: none; }
+    #diagnostica b { color: #ace7ff; }
+  </style>
+</head>
+<body>
+
+  <model-viewer id="viewer"
+    src="tarxien_temples_1-v1.glb"
+    ios-src="tarxien.usdz"
+    ar
+    ar-modes="webxr quick-look"
+    camera-controls
+    auto-rotate
+    scale="0.0106 0.0106 0.0106"
+    shadow-intensity="1.5"
+    exposure="1.2"
+    camera-orbit="45deg 75deg 105%"
+    min-camera-orbit="auto auto 5%"
+    environment-image="neutral"
+    alt="Modello 3D Templi di Tarxien">
+
+    <button slot="ar-button" style="background-color: white; border-radius: 8px; border: 1px solid #ccc; position: absolute; top: 20px; right: 20px; padding: 12px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+      VEDI IN AR
+    </button>
+
+    <div id="diagnostica" aria-live="polite">
+      <b>DIAGNOSTICA • Templi di Tarxien • Model Viewer 4.4.0</b><br>
+      Chrome: <span id="chrome">?</span> | Correzione: <span id="patch">?</span><br>
+      Percorso di rendering AR: <span id="layer">nessuna sessione</span><br>
+      Modello: <span id="stato-modello">caricamento...</span> |
+      AR: <span id="stato-ar">non avviata</span> |
+      Tracking: <span id="stato-tracking">nessun evento</span><br>
+      Dimensioni (m): <span id="dimensioni">...</span>
+    </div>
+  </model-viewer>
+
+  <script type="module">
+    if (new URLSearchParams(location.search).get('diagnostica') === '1') {
+      const viewer = document.querySelector('#viewer');
+      const $ = (id) => document.querySelector(id);
+      const fmt = (v) => Number.isFinite(v) ? v.toFixed(3) : String(v);
+      $('#diagnostica').style.display = 'block';
+      const m = navigator.userAgent.match(/Chrome\/([\d.]+)/);
+      $('#chrome').textContent = m ? m[1] : 'non Chrome';
+      $('#patch').textContent = window.__arPatch;
+      const aggiornaLayer = () => { $('#layer').textContent = window.__xrLayer; };
+      window.addEventListener('xr-layer-info', aggiornaLayer);
+      const misura = () => {
+        $('#stato-modello').textContent = 'caricato';
+        try { const d = viewer.getDimensions(); $('#dimensioni').textContent = [d.x, d.y, d.z].map(fmt).join(' × '); }
+        catch (e) { $('#dimensioni').textContent = 'errore: ' + e.message; }
+      };
+      if (viewer.loaded) misura();
+      viewer.addEventListener('load', misura);
+      viewer.addEventListener('error', (e) => { $('#stato-modello').textContent = 'errore: ' + (e.detail?.type ?? 'sconosciuto'); });
+      viewer.addEventListener('ar-status', (e) => {
+        const t = { 'not-presenting': 'non avviata', 'session-started': 'sessione avviata', 'object-placed': 'oggetto collocato', 'failed': 'avvio non riuscito' };
+        $('#stato-ar').textContent = t[e.detail?.status] ?? e.detail?.status ?? 'sconosciuto';
+        aggiornaLayer();
+      });
+      viewer.addEventListener('ar-tracking', (e) => { $('#stato-tracking').textContent = e.detail?.status === 'tracking' ? 'attivo' : 'non attivo'; });
+    }
+  </script>
+</body>
+</html>
